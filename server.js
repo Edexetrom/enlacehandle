@@ -159,5 +159,5 @@ setInterval(syncToSheets, 30000);*/
 
 app.listen(PORT, () => {
     console.log(`Servidor API corriendo en puerto ${PORT}`);
-    syncToSheets();
+    //syncToSheets();
 });
