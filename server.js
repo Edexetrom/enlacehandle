@@ -109,6 +109,30 @@ app.post('/api/webhook', (req, res) => {
     });
 });
 
+/**
+ * GET /api/agenda
+ * Retorna todos los registros (Lectura)
+ */
+app.get('/api/agenda', (req, res) => {
+    db.all("SELECT * FROM agenda ORDER BY folio_num DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(200).json(rows);
+    });
+});
+
+/**
+ * GET /api/agenda/:telefono
+ * Retorna un registro específico por teléfono
+ */
+app.get('/api/agenda/:telefono', (req, res) => {
+    const phone = normalizePhone(req.params.telefono);
+    db.get("SELECT * FROM agenda WHERE telefono = ?", [phone], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row) return res.status(404).send("No encontrado");
+        res.status(200).json(row);
+    });
+});
+
 app.get('/health', (req, res) => res.send("API Online"));
 
 // --- LÓGICA DE SINCRONIZACIÓN CON GOOGLE SHEETS ---
