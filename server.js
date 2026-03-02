@@ -113,7 +113,7 @@ app.get('/health', (req, res) => res.send("API Online"));
 
 // --- LÓGICA DE SINCRONIZACIÓN CON GOOGLE SHEETS ---
 
-async function syncToSheets() {
+/*async function syncToSheets() {
     if (!auth) {
         console.error("No se puede sincronizar: Autenticación no configurada.");
         return;
@@ -153,9 +153,9 @@ async function syncToSheets() {
     } catch (error) {
         console.error("X Error en sincronización:", error.message);
     }
-}
+} 
 
-setInterval(syncToSheets, 30000);
+setInterval(syncToSheets, 30000);*/
 
 app.listen(PORT, () => {
     console.log(`Servidor API corriendo en puerto ${PORT}`);

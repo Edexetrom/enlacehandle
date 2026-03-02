@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  api-enlace:
+    build: .
+    container_name: api_enlace_db
+    restart: always
+    ports:
+      - "3000"
+    environment:
+      - PORT=3000
+      - GOOGLE_SERVICE_ACCOUNT_JSON=${GOOGLE_SERVICE_ACCOUNT_JSON}
+      - SOURCE_SPREADSHEET_ID=${SOURCE_SPREADSHEET_ID}
+      - TARGET_SPREADSHEET_ID=${TARGET_SPREADSHEET_ID}
+      - DB_PATH=/usr/src/app/data/enlace.db
+    volumes:
+      # Mapeo de persistencia para la base de datos SQLite
+      - agenda-data:/usr/src/app/data
+
+volumes:
+  agenda-data:
+    driver: local
