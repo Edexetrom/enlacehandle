@@ -1,0 +1,15 @@
+# Ignorar archivos compilados
+*.exe
+*.dll
+*.class
+
+# Ignorar carpetas de dependencias
+node_modules/
+
+# Ignorar configuraciones locales
+.env
+*.log
+
+# Ignorar archivos temporales
+*.tmp
+*.swp
