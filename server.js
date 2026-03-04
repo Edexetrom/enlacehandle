@@ -4,7 +4,9 @@
  * Ahora configurado para leer credenciales desde variables de entorno (.env).
  */
 
-require('dotenv').config(); // Carga variables desde .env si existe (útil para desarrollo local)
+
+
+require('dotenv').config();
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const { google } = require('googleapis');
@@ -13,43 +15,26 @@ const path = require('path');
 const app = express();
 app.use(express.json());
 
-// --- CONFIGURACIÓN ---
-const PORT = process.env.PORT || 3000;
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'enlace.db');
-
 // IDs de Documentos de Google (Pueden venir de .env o usar los default)
 const SOURCE_SPREADSHEET_ID = process.env.SOURCE_SPREADSHEET_ID || '1KmhO5eGKGy-eTFFHSYaT3ZFO11dp2LyODua_Efvqd6I';
 const TARGET_SPREADSHEET_ID = process.env.TARGET_SPREADSHEET_ID || '1UV3FePqn1fcEKJj7U1KajiwOgWuFkcuV09_-3M47pHk';
 
-// --- CONFIGURACIÓN DE AUTH DE GOOGLE ---
-let auth;
-try {
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-        // Si las credenciales están en una variable de entorno como string JSON
-        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-        auth = new google.auth.GoogleAuth({
-            credentials,
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
-        console.log("Autenticación configurada mediante variable de entorno.");
-    } else {
-        // Fallback a archivo físico si no hay variable de entorno
-        const CREDENTIALS_PATH = path.join(__dirname, 'credentials.json');
-        auth = new google.auth.GoogleAuth({
-            keyFile: CREDENTIALS_PATH,
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
-        console.log("Autenticación configurada mediante archivo credentials.json.");
-    }
-} catch (error) {
-    console.error("Error configurando la autenticación de Google:", error.message);
+///////////
+const PORT = process.env.PORT || 3000;
+const DATA_DIR = path.join(__dirname, 'data');
+if (!require('fs').existsSync(DATA_DIR)) {
+    require('fs').mkdirSync(DATA_DIR, { recursive: true });
 }
+const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'enlace.db');
 
-// --- INICIALIZACIÓN DE BASE DE DATOS ---
+// Si no hay API_KEY definida en .env, se desactiva la validación para facilitar la integración inicial
+const API_KEY = process.env.WEBHOOK_API_KEY || null;
+
+// --- INICIALIZACIÓN DE DB ---
 const db = new sqlite3.Database(DB_PATH, (err) => {
     if (err) console.error("Error al abrir SQLite:", err.message);
     else {
-        console.log(`Conectado a SQLite: ${DB_PATH}`);
+        console.log(`Conectado a SQLite en: ${DB_PATH}`);
         initTables();
     }
 });
@@ -64,11 +49,23 @@ function initTables() {
             quien_envio TEXT, ultima_fecha_contacto TEXT, veces_contactado TEXT,
             folios_r TEXT, folio_num INTEGER
         )`);
-        db.run(`CREATE TABLE IF NOT EXISTS reportes (
-            folio_r TEXT, nombre TEXT, telefono TEXT, fecha_cita_lograda TEXT
+
+        db.run(`CREATE TABLE IF NOT EXISTS id_reportes (
+            folio_r TEXT PRIMARY KEY, 
+            nombre TEXT, 
+            telefono TEXT, 
+            fecha_cita_lograda TEXT
         )`);
     });
 }
+
+// --- MIDDLEWARE DE SEGURIDAD ---
+const authenticate = (req, res, next) => {
+    if (!API_KEY) return next(); // Si no hay clave configurada, permite el paso
+    const key = req.headers['x-api-key'];
+    if (key && key === API_KEY) return next();
+    res.status(401).send("No autorizado");
+};
 
 // --- UTILIDADES ---
 function normalizePhone(phone) {
@@ -81,55 +78,82 @@ function getFolioNumber(folioStr) {
     return match ? parseInt(match[0], 10) : 0;
 }
 
-// --- RUTAS DE LA API ---
+// --- RUTAS ---
 
-app.post('/api/webhook', (req, res) => {
-    const data = req.body;
-    const phone = normalizePhone(data.telefono);
-    const folioNum = getFolioNumber(data.folio_ingreso);
+/**
+ * Webhook para AGENDA (Compatible con /api/webhook y /api/webhook/agenda)
+ */
+const handleAgendaWebhook = (req, res) => {
+    const d = req.body;
+    const phone = normalizePhone(d.telefono);
+    const folioNum = getFolioNumber(d.folio_ingreso);
 
     if (!phone) return res.status(400).send("Teléfono requerido");
 
-    const sql = `INSERT INTO agenda (
-        folio_ingreso, nombre, telefono, status, comentarios, folio_num
-    ) VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(telefono) DO UPDATE SET
-        folio_ingreso = excluded.folio_ingreso,
-        nombre = excluded.nombre,
-        status = excluded.status,
-        comentarios = excluded.comentarios,
-        folio_num = excluded.folio_num
-    WHERE excluded.folio_num > agenda.folio_num`;
+    // Si el webhook no envía fechas, usamos las del servidor para el registro inicial
+    const now = new Date();
+    const serverFecha = now.toLocaleDateString('es-MX', { timeZone: 'America/Mexico_City' });
+    const serverHora = now.toLocaleTimeString('es-MX', { hour12: false, timeZone: 'America/Mexico_City' });
+
+    const sql = `
+        INSERT INTO agenda (
+            folio_ingreso, nombre, telefono, status, comentarios, 
+            hora_ingreso_meta, fecha_ingreso_meta, folio_num
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(telefono) DO UPDATE SET
+            folio_ingreso = excluded.folio_ingreso,
+            nombre = excluded.nombre,
+            status = excluded.status,
+            comentarios = excluded.comentarios,
+            folio_num = excluded.folio_num
+        WHERE excluded.folio_num > agenda.folio_num
+    `;
 
     db.run(sql, [
-        data.folio_ingreso, data.nombre, phone, data.status, data.comentarios, folioNum
-    ], (err) => {
+        d.folio_ingreso, d.nombre, phone, d.status, d.comentarios,
+        d.hora_ingreso_meta || serverHora, d.fecha_ingreso_meta || serverFecha, folioNum
+    ], function (err) {
         if (err) return res.status(500).json({ error: err.message });
-        res.status(200).send("Datos procesados correctamente");
+        res.status(200).json({ message: "OK", id: phone });
+    });
+};
+
+app.post('/api/webhook', authenticate, handleAgendaWebhook);
+app.post('/api/webhook/agenda', authenticate, handleAgendaWebhook);
+
+/**
+ * Webhook para REPORTES (Folios R)
+ */
+app.post('/api/webhook/reportes', authenticate, (req, res) => {
+    const d = req.body;
+    const phone = normalizePhone(d.telefono);
+    if (!phone || !d.folio_r) return res.status(400).send("Teléfono y Folio R requeridos");
+
+    const sql = `INSERT INTO id_reportes (folio_r, nombre, telefono, fecha_cita_lograda) 
+                 VALUES (?, ?, ?, ?) ON CONFLICT(folio_r) DO UPDATE SET fecha_cita_lograda = excluded.fecha_cita_lograda`;
+
+    db.run(sql, [d.folio_r, d.nombre, phone, d.fecha_cita_lograda], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(200).send("Reporte guardado");
     });
 });
 
 /**
- * GET /api/agenda
- * Retorna todos los registros (Lectura)
+ * Endpoints de Lectura
  */
 app.get('/api/agenda', (req, res) => {
     db.all("SELECT * FROM agenda ORDER BY folio_num DESC", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.status(200).json(rows);
+        res.json(rows);
     });
 });
 
-/**
- * GET /api/agenda/:telefono
- * Retorna un registro específico por teléfono
- */
 app.get('/api/agenda/:telefono', (req, res) => {
     const phone = normalizePhone(req.params.telefono);
     db.get("SELECT * FROM agenda WHERE telefono = ?", [phone], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!row) return res.status(404).send("No encontrado");
-        res.status(200).json(row);
+        res.json(row);
     });
 });
 
