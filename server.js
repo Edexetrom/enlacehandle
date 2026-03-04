@@ -148,6 +148,13 @@ app.get('/api/agenda', (req, res) => {
     });
 });
 
+app.get('/api/reportes', (req, res) => {
+    db.all("SELECT * FROM id_reportes ORDER BY folio_num DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
 app.get('/api/agenda/:telefono', (req, res) => {
     const phone = normalizePhone(req.params.telefono);
     db.get("SELECT * FROM agenda WHERE telefono = ?", [phone], (err, row) => {
